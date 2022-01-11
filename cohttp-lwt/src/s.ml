@@ -37,6 +37,21 @@ end
 module type Client = sig
   type ctx
 
+  module Conn_cache : sig
+    include Cohttp.Conn_cache.S
+      with type 'a promise := 'a Lwt.t
+       and type body := Body.t
+
+    val no_cache :?ctx:ctx -> unit -> t
+    val cache :
+      ?ctx:ctx ->
+      ?keep:int ->
+      ?retry:int ->
+      ?parallel:int ->
+      ?depth:int ->
+      unit -> t
+  end
+
   val call :
     ?ctx:ctx ->
     ?headers:Http.Header.t ->

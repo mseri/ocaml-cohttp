@@ -2,6 +2,7 @@ module Accept = Accept
 module Auth = Auth
 module Body = Body
 module Conf = Conf
+module Conn_cache = Conn_cache
 module Connection = Connection [@@deprecated "Connection.t values are useless."]
 module Code = Code
 module Cookie = Cookie
