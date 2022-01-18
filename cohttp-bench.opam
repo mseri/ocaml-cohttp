@@ -23,11 +23,13 @@ homepage: "https://github.com/mirage/ocaml-cohttp"
 doc: "https://mirage.github.io/ocaml-cohttp/"
 bug-reports: "https://github.com/mirage/ocaml-cohttp/issues"
 depends: [
-  "dune" {>= "2.9"}
+  "dune" {>= "3.0"}
   "core" {>= "v0.13.0"}
   "core_bench"
   "http" {= version}
+  "cohttp" {= version}
   "cohttp-lwt-unix" {= version}
+  "cohttp-server-lwt-unix" {= version}
   "cohttp-async" {= version}
   "odoc" {with-doc}
 ]
@@ -40,11 +42,9 @@ build: [
     name
     "-j"
     jobs
-    "--promote-install-files=false"
     "@install"
     "@runtest" {with-test}
     "@doc" {with-doc}
   ]
-  ["dune" "install" "-p" name "--create-install-files" name]
 ]
 dev-repo: "git+https://github.com/mirage/ocaml-cohttp.git"
