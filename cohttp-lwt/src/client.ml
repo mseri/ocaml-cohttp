@@ -47,7 +47,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       ; condition :unit Lwt_condition.t (* watching in_flight *)
       ; finalise :(t -> unit Lwt.t)
       ; mutex :Lwt_mutex.t
-      ; id :int
       }
 
     let length pipeline =
@@ -56,25 +55,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let notify pipeline =
       Lwt_condition.wait pipeline.condition
 
-    let to_string pipeline =
-      Printf.sprintf "Pipeline %u (%u %s)"
-        pipeline.id
-        (length pipeline)
-        (match pipeline.conn with
-        |Connecting _ -> "Connecting"
-        |Full _ -> "Full"
-        |Half _ -> "Half"
-        |Closed -> "Closed"
-        |Failed _ -> "Failed")
-
-    let log pipeline s = prerr_endline (to_string pipeline ^ ": " ^ s)
-
     let finalise pipeline =
       (* be sure to call user (in wakeup_later_exn) only after finalise had a
        * chance to remove pipeline from connection cache. Otherwise user might
        * try to requeue request when connection cache still holds failed
        * pipeline. *)
-      log pipeline "finalising";
       match pipeline.conn with
       | Connecting _ | Full _ | Half _ -> assert false
       | Closed ->
@@ -97,11 +82,9 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         | Connecting _ | Closed | Failed _ -> assert false
         | Full (ic, _) | Half ic -> ic
       in
-      log pipeline "reader waiting";
       Response.read ic >>= fun res ->
       match res with
       | `Ok res ->
-        log pipeline "got response";
         (* don't take from queue yet, because body may still be in flight *)
         let {req; res_r; _} = Queue.peek pipeline.in_flight in
 
@@ -134,7 +117,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           Lwt.wakeup_later res_r (res, Body.of_stream stream);
           Lwt_stream.closed stream >>= fun () ->
           closed := true;
-          log pipeline "body finished";
           Queue.take pipeline.in_flight |> ignore;
           Lwt_condition.broadcast pipeline.condition ();
           reader pipeline
@@ -146,7 +128,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           reader pipeline;
         end
       | `Eof ->
-        log pipeline "read EOF";
         begin match pipeline.conn with
           | Full _ | Half _ when Queue.is_empty pipeline.in_flight ->
               pipeline.conn <- Closed
@@ -168,7 +149,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
      * order they requested it, which is the case in Lwt. *)
     let shutdown pipeline =
       Lwt_mutex.with_lock pipeline.mutex @@ fun () ->
-      log pipeline "shutdown";
       match pipeline.conn with
         | Full (ic, oc) ->
           pipeline.conn <- Half ic;
@@ -185,7 +165,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Lwt_mutex.with_lock pipeline.mutex begin fun () ->
         match pipeline.conn with
         | Full (_, oc) ->
-          log pipeline ("writing request " ^ (Request.uri req |> Uri.to_string));
           Queue.push {req; body; res_r; res} pipeline.in_flight;
           Lwt_condition.broadcast pipeline.condition ();
           Lwt.catch
@@ -209,13 +188,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         end >>= fun () ->
       res
 
-    let counter = ref 0
     let create
       ?(finalise=fun _ -> Lwt.return_unit)
       ?(ctx=Net.default_ctx)
       uri
       =
-      incr counter;
       let mutex = Lwt_mutex.create () in
       Lwt.async (fun () -> Lwt_mutex.lock mutex);
       let connection =
@@ -228,7 +205,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         ; conn = Connecting connection
         ; mutex
         ; condition = Lwt_condition.create ()
-        ; id = !counter
         }
       in
       Lwt.on_any connection
@@ -241,7 +217,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           pipeline.conn <- Failed e;
           Lwt_mutex.unlock pipeline.mutex;
         end;
-      log pipeline "created";
       pipeline
   end
 
@@ -261,7 +236,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           | `Empty | `String _ | `Strings _ -> Lwt.return_unit
           | `Stream stream ->
               Lwt_stream.closed stream >>= fun () ->
-              prerr_endline "no_cache shutting down pipeline";
               Pipeline.shutdown pipeline
           end;
         res
@@ -290,7 +264,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           if pipes = []
           then cache <- cache |> Uri_map.remove addr
           else cache <- cache |> Uri_map.add addr pipes;
-          prerr_endline "  removed pipeline from cache";
           Lwt.return_unit
         in
         let create () =
@@ -301,7 +274,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             if Pipeline.length pipeline = 0 then begin
               timeout :=
                 Time.sleep_ns Int64.(mul (of_int keep) 1_000_000L) >>= fun () ->
-                prerr_endline "Pipeline timed out";
                 Pipeline.shutdown pipeline (* failure is ignored *)
             end;
             Lwt.on_success (Pipeline.notify pipeline) busy
