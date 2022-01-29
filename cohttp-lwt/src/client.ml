@@ -129,15 +129,15 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         end
       | `Eof ->
         begin match pipeline.conn with
-          | Full _ | Half _ when Queue.is_empty pipeline.in_flight ->
-              pipeline.conn <- Closed
-          | Full (_, oc) ->
-              Net.close_out oc;
-              pipeline.conn <- Failed Retry
-          | Half _ ->
-              pipeline.conn <- Failed Retry
-          | Failed _ -> ()
-          | Connecting _ | Closed -> assert false
+        | Full _ | Half _ when Queue.is_empty pipeline.in_flight ->
+          pipeline.conn <- Closed
+        | Full (_, oc) ->
+          Net.close_out oc;
+          pipeline.conn <- Failed Retry
+        | Half _ ->
+          pipeline.conn <- Failed Retry
+        | Failed _ -> ()
+        | Connecting _ | Closed -> assert false
         end;
         finalise pipeline
       | `Invalid reason ->
@@ -150,13 +150,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let shutdown pipeline =
       Lwt_mutex.with_lock pipeline.mutex @@ fun () ->
       match pipeline.conn with
-        | Full (ic, oc) ->
-          pipeline.conn <- Half ic;
-          Net.close_out oc;
-          Lwt.return_unit
-        | Half _ | Closed -> Lwt.return_unit
-        | Failed e -> Lwt.fail e
-        | Connecting _ -> assert false
+      | Full (ic, oc) ->
+        pipeline.conn <- Half ic;
+        Net.close_out oc;
+        Lwt.return_unit
+      | Half _ | Closed -> Lwt.return_unit
+      | Failed e -> Lwt.fail e
+      | Connecting _ -> assert false
 
     let process pipeline ?(body = `Empty) req =
       let res, res_r = Lwt.wait () in
@@ -169,9 +169,9 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           Lwt_condition.broadcast pipeline.condition ();
           Lwt.catch
             begin fun () -> (* try *)
-                Request.write (fun writer ->
-                    Body.write_body (Request.write_body writer) body
-                  ) req oc
+              Request.write (fun writer ->
+                  Body.write_body (Request.write_body writer) body
+                ) req oc
             end
             begin fun e -> (* with *)
               (try Net.close_out oc with _ -> ());
@@ -179,19 +179,19 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
               Lwt.return_unit
             end
         | Half _ | Closed ->
-            Lwt.wakeup_later_exn res_r Retry;
-            Lwt.return_unit
+          Lwt.wakeup_later_exn res_r Retry;
+          Lwt.return_unit
         | Failed e ->
-            Lwt.wakeup_later_exn res_r e;
-            Lwt.return_unit
+          Lwt.wakeup_later_exn res_r e;
+          Lwt.return_unit
         | Connecting _ -> assert false
-        end >>= fun () ->
+      end >>= fun () ->
       res
 
     let create
-      ?(finalise=fun _ -> Lwt.return_unit)
-      ?(ctx=Net.default_ctx)
-      uri
+        ?(finalise=fun _ -> Lwt.return_unit)
+        ?(ctx=Net.default_ctx)
+        uri
       =
       let mutex = Lwt_mutex.create () in
       Lwt.async (fun () -> Lwt_mutex.lock mutex);
@@ -235,9 +235,9 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           match body with
           | `Empty | `String _ | `Strings _ -> Lwt.return_unit
           | `Stream stream ->
-              Lwt_stream.closed stream >>= fun () ->
-              Pipeline.shutdown pipeline
-          end;
+            Lwt_stream.closed stream >>= fun () ->
+            Pipeline.shutdown pipeline
+        end;
         res
     end
 
@@ -252,42 +252,42 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Uri.(make ?scheme:(scheme uri) ?host:(host uri) ?port:(port uri) ())
 
     let cache ?ctx:ctx ?(keep=60_000) ?(retry=2) ?(parallel=4) ?(depth=1) () =
-    object(self)
-      val mutable cache :Pipeline.t list Uri_map.t = Uri_map.empty
-      val mutex = Lwt_mutex.create ()
+      object(self)
+        val mutable cache :Pipeline.t list Uri_map.t = Uri_map.empty
+        val mutex = Lwt_mutex.create ()
 
-      method private get_pipeline addr =
-        let finalise pipeline =
-          Lwt_mutex.with_lock mutex @@ fun () ->
-          let pipes = Uri_map.find addr cache in
-          let pipes = List.filter ((!=) pipeline) pipes in
-          if pipes = []
-          then cache <- cache |> Uri_map.remove addr
-          else cache <- cache |> Uri_map.add addr pipes;
-          Lwt.return_unit
-        in
-        let create () =
-          let pipeline = Pipeline.create ~finalise ?ctx addr
-          and timeout = ref Lwt.return_unit in
-          let rec busy () =
-            Lwt.cancel !timeout;
-            if Pipeline.length pipeline = 0 then begin
-              timeout :=
-                Time.sleep_ns Int64.(mul (of_int keep) 1_000_000L) >>= fun () ->
-                Pipeline.shutdown pipeline (* failure is ignored *)
-            end;
-            Lwt.on_success (Pipeline.notify pipeline) busy
-          in busy ();
-          pipeline
-        in
-        Lwt_mutex.lock mutex >>= fun () ->
-        match Uri_map.find_opt addr cache with
-        | None ->
+        method private get_pipeline addr =
+          let finalise pipeline =
+            Lwt_mutex.with_lock mutex @@ fun () ->
+            let pipes = Uri_map.find addr cache in
+            let pipes = List.filter ((!=) pipeline) pipes in
+            if pipes = []
+            then cache <- cache |> Uri_map.remove addr
+            else cache <- cache |> Uri_map.add addr pipes;
+            Lwt.return_unit
+          in
+          let create () =
+            let pipeline = Pipeline.create ~finalise ?ctx addr
+            and timeout = ref Lwt.return_unit in
+            let rec busy () =
+              Lwt.cancel !timeout;
+              if Pipeline.length pipeline = 0 then begin
+                timeout :=
+                  Time.sleep_ns Int64.(mul (of_int keep) 1_000_000L) >>= fun () ->
+                  Pipeline.shutdown pipeline (* failure is ignored *)
+              end;
+              Lwt.on_success (Pipeline.notify pipeline) busy
+            in busy ();
+            pipeline
+          in
+          Lwt_mutex.lock mutex >>= fun () ->
+          match Uri_map.find_opt addr cache with
+          | None ->
             let pipeline = create () in
             cache <- cache |> Uri_map.add addr [pipeline];
             Lwt_mutex.unlock mutex;
             Lwt.return pipeline
-        | Some pipes ->
+          | Some pipes ->
             let rec search length = function
               | a :: [] -> a, length + 1
               | a :: b :: tl
@@ -316,26 +316,26 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
                 (fun _ -> self#get_pipeline addr)
                 (fun _ -> self#get_pipeline addr)
 
-      method process ?body req =
-        let addr = strip_uri (Request.uri req) in
-        let rec process retry =
-          self#get_pipeline addr >>= fun pipe ->
-          Lwt.catch (fun () -> Pipeline.process pipe ?body req)
-            begin function
-            | Retry as e ->
+        method process ?body req =
+          let addr = strip_uri (Request.uri req) in
+          let rec process retry =
+            self#get_pipeline addr >>= fun pipe ->
+            Lwt.catch (fun () -> Pipeline.process pipe ?body req)
+              begin function
+              | Retry as e ->
                 begin match body with
                 | Some `Stream _ -> Lwt.fail Retry
                 | None | Some `Empty | Some `String _ | Some `Strings _ ->
-                    Printf.eprintf "Got Retry %u retries left\n" retry;
-                    if retry <= 0
-                    then Lwt.fail e
-                    else process (retry - 1)
+                  Printf.eprintf "Got Retry %u retries left\n" retry;
+                  if retry <= 0
+                  then Lwt.fail e
+                  else process (retry - 1)
                 end
-            | e -> Lwt.fail e
-            end
-        in
-        process retry
-    end
+              | e -> Lwt.fail e
+              end
+          in
+          process retry
+      end
 
     let default = ref (cache ())
     let set_default x = default := x
@@ -356,7 +356,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     | _ -> true
 
   let call ?(ctx = Net.default_ctx) ?headers ?(body = `Empty) ?chunked meth uri
-      =
+    =
     let headers = match headers with None -> Header.init () | Some h -> h in
     let chunked =
       match chunked with None -> is_meth_chunked meth | Some v -> v
@@ -405,11 +405,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let pipeline = Pipeline.create ?ctx uri
     and mutex = Lwt_mutex.create () in
     Lwt.return @@ Lwt_stream.from @@ fun () ->
-      Lwt_stream.get reqs >>= function
-      | None ->
-        Pipeline.shutdown pipeline |> ignore;
-        Lwt.return_none
-      | Some (req, body) ->
-        Lwt_mutex.with_lock mutex @@ fun () ->
-        Pipeline.process pipeline ~body req >|= Option.some
+    Lwt_stream.get reqs >>= function
+    | None ->
+      Pipeline.shutdown pipeline |> ignore;
+      Lwt.return_none
+    | Some (req, body) ->
+      Lwt_mutex.with_lock mutex @@ fun () ->
+      Pipeline.process pipeline ~body req >|= Option.some
 end
