@@ -37,6 +37,27 @@ end
 module type Client = sig
   type ctx
 
+  module Connection : sig
+    type t
+
+    val connect :
+      ?finalise:(t -> unit Lwt.t) ->
+      ?ctx:ctx ->
+      Uri.t -> (* XXX this should actually be something like Conduit.endp *)
+      t
+
+    val close : t -> unit Lwt.t
+    val is_closed : t -> bool
+    val notify : t -> unit Lwt.t
+    val length : t -> int
+
+    val request :
+      t ->
+      ?body:Body.t ->
+      Cohttp.Request.t ->
+      (Cohttp.Response.t * Body.t) Lwt.t
+  end
+
   module Conn_cache : sig
     include Cohttp.Conn_cache.S
       with type 'a promise := 'a Lwt.t

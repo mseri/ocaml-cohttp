@@ -5,6 +5,6 @@ module type S = sig
 
   val set_default : t -> unit
 
-  val process : ?conn_cache:t -> ?body:body -> Request.t ->
+  val request : ?conn_cache:t -> ?body:body -> Request.t ->
     (Response.t * body) promise
 end
