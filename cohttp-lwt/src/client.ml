@@ -19,6 +19,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
 
     val connect :
       ?finalise:(t -> unit Lwt.t) ->
+      ?persistent:bool ->
       ?ctx:ctx ->
       Uri.t -> (* XXX this should actually be something like Conduit.endp *)
       t
@@ -44,8 +45,10 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       ; body :Body.t
       ; res_r :(Response.t * Body.t) Lwt.u
       ; res :(Response.t * Body.t) Lwt.t }
+    type persistent = [ `True | `False | `Unknown ]
     type t =
       { mutable state :state
+      ; mutable persistent :persistent
       ; in_flight :req_resr Queue.t
       ; waiting :req_resr Queue.t
       ; condition :unit Lwt_condition.t (* watching queues *)
@@ -110,6 +113,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         Response.read ic >>= fun res ->
         match res with
         | `Ok res ->
+          if
+            connection.persistent = `Unknown &&
+            Response.version res = `HTTP_1_1 &&
+            not (Header.mem (Response.headers res) "Connection")
+          then connection.persistent <- `True;
           (* don't take from queue yet, because body may still be in flight *)
           let {req; res_r; _} = Queue.peek connection.in_flight in
 
@@ -184,7 +192,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
 
     let rec writer connection =
       match connection.state with
-      | Full _ when Queue.is_empty connection.waiting ->
+      | Full _
+        when Queue.is_empty connection.waiting
+          || not (Queue.is_empty connection.in_flight
+                  || connection.persistent = `True)
+        ->
         Lwt.try_bind (fun () -> Lwt_condition.wait connection.condition)
           (fun _ -> writer connection)
           (fun _ -> writer connection)
@@ -195,6 +207,15 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       | Full (ic, oc)
       | Closing (ic, oc) ->
         let {req; body; res_r; _} as work = Queue.take connection.waiting in
+        let req =
+          let open Request in
+          let headers = headers req in
+          if connection.persistent <> `False || Header.mem headers "Connection"
+          then req
+          else
+            Request.make ~meth:(meth req) ~version:(version req) ~encoding:(encoding req)
+              ~headers:(Header.add headers "Connection" "close") (uri req)
+        in
         Queue.push work connection.in_flight;
         Lwt_condition.broadcast connection.condition ();
         Lwt.catch
@@ -221,9 +242,15 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let counter = ref 0
     let connect
         ?(finalise=fun _ -> Lwt.return_unit)
+        ?persistent
         ?(ctx=Net.default_ctx)
         uri
       =
+      let persistent = match persistent with
+        | None -> `Unknown
+        | Some true -> `True
+        | Some false -> `False
+      in
       let channels =
         Net.connect_uri ~ctx uri >|= fun (_, ic, oc) ->
         (ic, oc)
@@ -234,6 +261,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         ; waiting = Queue.create ()
         ; state = Connecting channels
         ; condition = Lwt_condition.create ()
+        ; persistent
         }
       in
       incr counter;
@@ -256,7 +284,9 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
 
     let no_cache ?ctx:ctx () :t = object
       method request ?body req =
-        let connection = Connection.connect ?ctx (Request.uri req) in
+        let connection =
+          Connection.connect ?ctx ~persistent:false (Request.uri req)
+        in
         let res = Connection.request connection ?body req in
         (* this can be simplified when https://github.com/mirage/ocaml-conduit/pull/319 is released. *)
         Lwt.async begin fun () ->

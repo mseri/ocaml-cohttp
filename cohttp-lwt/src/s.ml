@@ -42,6 +42,7 @@ module type Client = sig
 
     val connect :
       ?finalise:(t -> unit Lwt.t) ->
+      ?persistent:bool ->
       ?ctx:ctx ->
       Uri.t -> (* XXX this should actually be something like Conduit.endp *)
       t
