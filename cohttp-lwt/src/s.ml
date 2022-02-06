@@ -60,9 +60,12 @@ module type Client = sig
   end
 
   module Connection_cache : sig
-    include Cohttp.Conn_cache.S
-      with type 'a promise := 'a Lwt.t
-       and type body := Body.t
+    type t
+
+    val set_default : t -> unit
+
+    val request : ?cache:t -> ?body:Body.t -> Cohttp.Request.t ->
+      (Cohttp.Response.t * Body.t) Lwt.t
 
     val no_cache :?ctx:ctx -> unit -> t
     val cache :

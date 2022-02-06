@@ -282,7 +282,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       connection
   end
 
-  module Conn_cache =
+  module Connection_cache =
   struct
     type t = < request : ?body:Body.t -> Request.t -> (Response.t * Body.t) Lwt.t >
     module Uri_map = Map.Make (Uri)
@@ -406,13 +406,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let default = ref (cache ())
     let set_default x = default := x
 
-    let request ?(conn_cache :t option) ?body req =
-      let conn_cache =
-        match conn_cache with
+    let request ?(cache :t option) ?body req =
+      let cache =
+        match cache with
         | None -> !default
         | Some x -> x
       in
-      conn_cache#request ?body req
+      cache#request ?body req
   end
 
   let is_meth_chunked = function
@@ -440,8 +440,8 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         (Request.make_for_client ~headers ~chunked ~body_length meth uri,
          buf)
     end >>= fun (req,body) ->
-    let conn_cache = Conn_cache.no_cache ~ctx () in
-    Conn_cache.request ~conn_cache ~body req
+    let cache = Connection_cache.no_cache ~ctx () in
+    Connection_cache.request ~cache ~body req
 
   (* The HEAD should not have a response body *)
   let head ?ctx ?headers uri = call ?ctx ?headers `HEAD uri >|= fst
