@@ -32,7 +32,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
   end
 
   module Connection :ConnectionS = struct
-    type connection =
+    type state =
       | Connecting of (Net.IO.ic * Net.IO.oc) Lwt.t
       | Full of (Net.IO.ic * Net.IO.oc)
       | Closing of (Net.IO.ic * Net.IO.oc)
@@ -45,7 +45,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       ; res_r :(Response.t * Body.t) Lwt.u
       ; res :(Response.t * Body.t) Lwt.t }
     type t =
-      { mutable conn :connection
+      { mutable state :state
       ; in_flight :req_resr Queue.t
       ; waiting :req_resr Queue.t
       ; condition :unit Lwt_condition.t (* watching queues *)
@@ -61,7 +61,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Printf.sprintf "Connection %u (%u %s)"
         connection.id
         (length connection)
-        (match connection.conn with
+        (match connection.state with
         |Connecting _ -> "Connecting"
         |Full _ -> "Full"
         |Closing _ -> "Closing"
@@ -82,46 +82,46 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
 
     let close connection =
       log connection "close";
-      match connection.conn with
+      match connection.state with
       | Connecting channels ->
-        connection.conn <- Closed;
+        connection.state <- Closed;
         Lwt.cancel channels;
         Lwt.on_success channels (fun (ic, oc) -> Net.close ic oc);
         Lwt_condition.broadcast connection.condition ()
       | Closing (ic, oc)
       | Full (ic, oc) ->
         Net.close ic oc;
-        connection.conn <- Closed;
+        connection.state <- Closed;
         Lwt_condition.broadcast connection.condition ()
       | Half ic ->
         Net.close_in ic;
-        connection.conn <- Closed;
+        connection.state <- Closed;
         Lwt_condition.broadcast connection.condition ()
       | Closed | Failed _ -> ()
 
     let shutdown connection =
       log connection "shutdown";
-      match connection.conn with
+      match connection.state with
       | Connecting channels ->
         Lwt.async @@ fun () ->
         channels >>= fun channels ->
         (* need to loose possible race with writer *)
         Lwt.pause () >>= fun () ->
-        connection.conn <- Closing channels;
+        connection.state <- Closing channels;
         Lwt.return_unit
       | Full channels ->
-        connection.conn <- Closing channels;
+        connection.state <- Closing channels;
       | Closing _ | Half _ | Closed | Failed _ -> ()
 
     let is_closed connection =
-      match connection.conn with
+      match connection.state with
       | Full _ -> false
       | Connecting _ -> false
       | Closing _ | Half _ -> true (* really ? *)
       | Closed | Failed _ -> true
 
     let rec reader connection =
-      match connection.conn with
+      match connection.state with
       | Connecting _ -> assert false
       | Closed | Failed _ -> assert false
       | Full (ic, _) | Closing (ic, _) | Half ic ->
@@ -175,12 +175,12 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           end
         | `Eof ->
           log connection "read EOF";
-          begin match connection.conn with
+          begin match connection.state with
           | Full (_, oc) | Closing (_, oc) ->
             Net.close_out oc;
-            connection.conn <- Closed
+            connection.state <- Closed
           | Half _ ->
-            connection.conn <- Closed
+            connection.state <- Closed
           (* Failed is no special case since we read proper EOF. *)
           | Closed | Failed _ -> ()
           | Connecting _ -> assert false
@@ -190,13 +190,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           Lwt.return_unit
         | `Invalid reason ->
           let e = Failure ("Cohttp_lwt failed to read response: " ^ reason) in
-          connection.conn <- Failed e;
+          connection.state <- Failed e;
           connection.finalise connection >>= fun () ->
           queue_fail connection connection.in_flight e;
           Lwt.return_unit
 
     let request connection ?(body = `Empty) req =
-      match connection.conn with
+      match connection.state with
       | Connecting _ | Full _ ->
         log connection ("queueing request " ^ Request.resource req);
         let res, res_r = Lwt.wait () in
@@ -209,13 +209,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
 
     let rec writer connection =
       log connection "entering writer";
-      match connection.conn with
+      match connection.state with
       | Full _ when Queue.is_empty connection.waiting ->
         Lwt.try_bind (fun () -> Lwt_condition.wait connection.condition)
           (fun _ -> writer connection)
           (fun _ -> writer connection)
       | Closing (ic, oc) when Queue.is_empty connection.waiting ->
-        connection.conn <- Half ic;
+        connection.state <- Half ic;
         Net.close_out oc;
         Lwt.return_unit
       | Full (ic, oc)
@@ -235,7 +235,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             log connection "writing failed";
             (try Net.close_out oc with _ -> ());
             (* XXX empty waiting queue ? *)
-            connection.conn <- Half ic;
+            connection.state <- Half ic;
             Lwt.wakeup_later_exn res_r e;
             Lwt.return_unit
           end
@@ -261,7 +261,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         { finalise
         ; in_flight = Queue.create ()
         ; waiting = Queue.create ()
-        ; conn = Connecting channels
+        ; state = Connecting channels
         ; condition = Lwt_condition.create ()
         ; id = !counter
         }
@@ -270,13 +270,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Lwt.on_any channels
         begin fun channels ->
           log connection "Connected";
-          connection.conn <- Full channels;
+          connection.state <- Full channels;
           Lwt.async (fun () -> reader connection);
           Lwt.async (fun () -> writer connection);
         end
         begin fun e ->
           log connection "connecting failed";
-          connection.conn <- Failed e
+          connection.state <- Failed e
         end;
       log connection "created";
       connection
