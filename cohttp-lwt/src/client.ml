@@ -60,7 +60,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Lwt_condition.wait connection.condition
 
     let queue_fail connection q e =
-      prerr_endline "queue_fail";
       Queue.iter (fun {res_r; _} -> Lwt.wakeup_later_exn res_r e) q;
       Queue.clear q;
       Lwt_condition.broadcast_exn connection.condition e
@@ -295,7 +294,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             if conns = []
             then cache <- cache |> Uri_map.remove addr
             else cache <- cache |> Uri_map.add addr conns;
-            prerr_endline "removed from cache";
             Lwt.return_unit
           in
           let connect () =
@@ -353,19 +351,17 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           let addr = strip_uri (Request.uri req) in
           let rec request retry =
             self#get_connection addr >>= fun conn ->
-            prerr_endline "cache: got connection";
             Lwt.catch (fun () -> Connection.request conn ?body req)
               begin function
               | Retry as e ->
                 begin match body with
-                | Some `Stream _ -> prerr_endline "cannot retry because of stream body"; Lwt.fail Retry
+                | Some `Stream _ -> Lwt.fail Retry
                 | None | Some `Empty | Some `String _ | Some `Strings _ ->
-                  Printf.eprintf "Got Retry. %u retries left\n" retry;
                   if retry <= 0
                   then Lwt.fail e
                   else request (retry - 1)
                 end
-              | e -> prerr_endline "Connection.request failed"; Lwt.fail e
+              | e -> Lwt.fail e
               end
           in
           request retry
