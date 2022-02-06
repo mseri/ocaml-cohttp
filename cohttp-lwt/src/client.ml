@@ -50,26 +50,11 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       ; waiting :req_resr Queue.t
       ; condition :unit Lwt_condition.t (* watching queues *)
       ; finalise :(t -> unit Lwt.t)
-      ; id :int
       }
 
     let length connection =
       Queue.length connection.in_flight +
       Queue.length connection.waiting
-
-    let to_string connection =
-      Printf.sprintf "Connection %u (%u %s)"
-        connection.id
-        (length connection)
-        (match connection.state with
-        |Connecting _ -> "Connecting"
-        |Full _ -> "Full"
-        |Closing _ -> "Closing"
-        |Half _ -> "Half"
-        |Closed -> "Closed"
-        |Failed _ -> "Failed")
-
-    let log pipeline s = prerr_endline (to_string pipeline ^ ": " ^ s)
 
     let notify connection =
       Lwt_condition.wait connection.condition
@@ -81,7 +66,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       Lwt_condition.broadcast_exn connection.condition e
 
     let close connection =
-      log connection "close";
       match connection.state with
       | Connecting channels ->
         connection.state <- Closed;
@@ -100,7 +84,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       | Closed | Failed _ -> ()
 
     let shutdown connection =
-      log connection "shutdown";
       match connection.state with
       | Connecting channels ->
         Lwt.async @@ fun () ->
@@ -125,11 +108,9 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       | Connecting _ -> assert false
       | Closed | Failed _ -> assert false
       | Full (ic, _) | Closing (ic, _) | Half ic ->
-        log connection "reader waiting";
         Response.read ic >>= fun res ->
         match res with
         | `Ok res ->
-          log connection "reader got response";
           (* don't take from queue yet, because body may still be in flight *)
           let {req; res_r; _} = Queue.peek connection.in_flight in
 
@@ -162,7 +143,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             Lwt.wakeup_later res_r (res, Body.of_stream stream);
             Lwt_stream.closed stream >>= fun () ->
             closed := true;
-            log connection "body finished";
             Queue.take connection.in_flight |> ignore;
             Lwt_condition.broadcast connection.condition ();
             reader connection
@@ -174,7 +154,6 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             reader connection;
           end
         | `Eof ->
-          log connection "read EOF";
           begin match connection.state with
           | Full (_, oc) | Closing (_, oc) ->
             Net.close_out oc;
@@ -198,17 +177,13 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let request connection ?(body = `Empty) req =
       match connection.state with
       | Connecting _ | Full _ ->
-        log connection ("queueing request " ^ Request.resource req);
         let res, res_r = Lwt.wait () in
         Queue.push {req; body; res_r; res} connection.waiting;
-        log connection "request queued";
         Lwt_condition.broadcast connection.condition ();
-        log connection "broadcast sent";
         res
-      | Closing _ | Half _ | Closed | Failed _ -> log connection "request rejected - Retry"; Lwt.fail Retry
+      | Closing _ | Half _ | Closed | Failed _ -> Lwt.fail Retry
 
     let rec writer connection =
-      log connection "entering writer";
       match connection.state with
       | Full _ when Queue.is_empty connection.waiting ->
         Lwt.try_bind (fun () -> Lwt_condition.wait connection.condition)
@@ -220,19 +195,16 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         Lwt.return_unit
       | Full (ic, oc)
       | Closing (ic, oc) ->
-        log connection "writer got something in queue";
         let {req; body; res_r; _} as work = Queue.take connection.waiting in
         Queue.push work connection.in_flight;
         Lwt_condition.broadcast connection.condition ();
         Lwt.catch
           begin fun () -> (* try *)
-            log connection "writing";
             Request.write (fun writer ->
                 Body.write_body (Request.write_body writer) body
               ) req oc
           end
           begin fun e -> (* with *)
-            log connection "writing failed";
             (try Net.close_out oc with _ -> ());
             (* XXX empty waiting queue ? *)
             connection.state <- Half ic;
@@ -263,22 +235,18 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
         ; waiting = Queue.create ()
         ; state = Connecting channels
         ; condition = Lwt_condition.create ()
-        ; id = !counter
         }
       in
       incr counter;
       Lwt.on_any channels
         begin fun channels ->
-          log connection "Connected";
           connection.state <- Full channels;
           Lwt.async (fun () -> reader connection);
           Lwt.async (fun () -> writer connection);
         end
         begin fun e ->
-          log connection "connecting failed";
           connection.state <- Failed e
         end;
-      log connection "created";
       connection
   end
 
