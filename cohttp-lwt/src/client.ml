@@ -24,7 +24,8 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       t
     val length : t -> int
     val notify : t -> unit Lwt.t
-    val close : t -> unit Lwt.t
+    val close : t -> unit
+    val shutdown : t -> unit
     val is_closed : t -> bool
     val request : t -> ?body:Body.t -> Cohttp.Request.t ->
       (Cohttp.Response.t * Body.t) Lwt.t
@@ -34,6 +35,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     type connection =
       | Connecting of (Net.IO.ic * Net.IO.oc) Lwt.t
       | Full of (Net.IO.ic * Net.IO.oc)
+      | Closing of (Net.IO.ic * Net.IO.oc)
       | Half of Net.IO.ic
       | Closed
       | Failed of exn
@@ -45,164 +47,212 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     type t =
       { mutable conn :connection
       ; in_flight :req_resr Queue.t
-      ; condition :unit Lwt_condition.t (* watching in_flight *)
+      ; waiting :req_resr Queue.t
+      ; condition :unit Lwt_condition.t (* watching queues *)
       ; finalise :(t -> unit Lwt.t)
-      ; mutex :Lwt_mutex.t
+      ; id :int
       }
 
     let length connection =
-      Queue.length connection.in_flight
+      Queue.length connection.in_flight +
+      Queue.length connection.waiting
+
+    let to_string connection =
+      Printf.sprintf "Connection %u (%u %s)"
+        connection.id
+        (length connection)
+        (match connection.conn with
+        |Connecting _ -> "Connecting"
+        |Full _ -> "Full"
+        |Closing _ -> "Closing"
+        |Half _ -> "Half"
+        |Closed -> "Closed"
+        |Failed _ -> "Failed")
+
+    let log pipeline s = prerr_endline (to_string pipeline ^ ": " ^ s)
 
     let notify connection =
       Lwt_condition.wait connection.condition
 
-    let finalise connection =
-      (* be sure to call user (in wakeup_later_exn) only after finalise had a
-       * chance to remove connection from connection cache. Otherwise user might
-       * try to requeue request when connection cache still holds failed
-       * connection. *)
-      match connection.conn with
-      | Connecting _ | Full _ | Half _ -> assert false
-      | Closed ->
-        connection.finalise connection >>= fun () ->
-        assert (Queue.is_empty connection.in_flight);
-        Lwt.return_unit
-      | Failed e ->
-        connection.finalise connection >>= fun () ->
-        if not (Queue.is_empty connection.in_flight) then begin
-          Queue.iter
-            (fun {res_r; _} -> Lwt.wakeup_later_exn res_r e)
-            connection.in_flight;
-          Queue.clear connection.in_flight;
-          Lwt_condition.broadcast_exn connection.condition e;
-        end;
-        Lwt.return_unit
+    let queue_fail connection q e =
+      prerr_endline "queue_fail";
+      Queue.iter (fun {res_r; _} -> Lwt.wakeup_later_exn res_r e) q;
+      Queue.clear q;
+      Lwt_condition.broadcast_exn connection.condition e
 
-    let rec reader connection =
-      let ic = match connection.conn with
-        | Connecting _ | Closed | Failed _ -> assert false
-        | Full (ic, _) | Half ic -> ic
-      in
-      Response.read ic >>= fun res ->
-      match res with
-      | `Ok res ->
-        (* don't take from queue yet, because body may still be in flight *)
-        let {req; res_r; _} = Queue.peek connection.in_flight in
-
-        (* A response header to a HEAD request is indistinguishable from a
-         * response header to a GET request. Therefore look at the request. *)
-        if
-          match Response.has_body res with
-          | _ when Request.meth req = `HEAD -> false
-          | `No -> false
-          | `Yes | `Unknown -> true
-        then begin
-          let stream =
-            Body.create_stream
-              Response.read_body_chunk
-              (Response.make_body_reader res ic)
-          in
-          (* finalise could run in a thread different from the lwt main thread.
-           * You may therefore not call into Lwt from a finaliser. *)
-          let closed = ref false in
-          Gc.finalise_last
-            begin fun () ->
-              if not !closed then
-                Log.warn (fun m ->
-                    m
-                      "Body not consumed, leaking stream! Refer to \
-                       https://github.com/mirage/ocaml-cohttp/issues/730 for \
-                       additional details")
-            end
-            stream;
-          Lwt.wakeup_later res_r (res, Body.of_stream stream);
-          Lwt_stream.closed stream >>= fun () ->
-          closed := true;
-          Queue.take connection.in_flight |> ignore;
-          Lwt_condition.broadcast connection.condition ();
-          reader connection
-        end
-        else begin
-          Queue.take connection.in_flight |> ignore;
-          Lwt_condition.broadcast connection.condition ();
-          Lwt.wakeup_later res_r (res, `Empty);
-          reader connection;
-        end
-      | `Eof ->
-        begin match connection.conn with
-        | Full _ | Half _ when Queue.is_empty connection.in_flight ->
-          connection.conn <- Closed
-        | Full (_, oc) ->
-          Net.close_out oc;
-          connection.conn <- Failed Retry
-        | Half _ ->
-          connection.conn <- Failed Retry
-        | Failed _ -> ()
-        | Connecting _ | Closed -> assert false
-        end;
-        finalise connection
-      | `Invalid reason ->
-        let e = Failure ("Cohttp_lwt failed to read response: " ^ reason) in
-        connection.conn <- Failed e;
-        finalise connection
-
-    (* in close and request I rely on mutex waiters receiving the lock in the
-     * order they requested it, which is the case in Lwt. *)
     let close connection =
-      Lwt_mutex.with_lock connection.mutex @@ fun () ->
+      log connection "close";
       match connection.conn with
+      | Connecting channels ->
+        connection.conn <- Closed;
+        Lwt.cancel channels;
+        Lwt.on_success channels (fun (ic, oc) -> Net.close ic oc);
+        Lwt_condition.broadcast connection.condition ()
+      | Closing (ic, oc)
       | Full (ic, oc) ->
-        connection.conn <- Half ic;
-        Net.close_out oc;
+        Net.close ic oc;
+        connection.conn <- Closed;
+        Lwt_condition.broadcast connection.condition ()
+      | Half ic ->
+        Net.close_in ic;
+        connection.conn <- Closed;
+        Lwt_condition.broadcast connection.condition ()
+      | Closed | Failed _ -> ()
+
+    let shutdown connection =
+      log connection "shutdown";
+      match connection.conn with
+      | Connecting channels ->
+        Lwt.async @@ fun () ->
+        channels >>= fun channels ->
+        (* need to loose possible race with writer *)
+        Lwt.pause () >>= fun () ->
+        connection.conn <- Closing channels;
         Lwt.return_unit
-      | Half _ | Closed -> Lwt.return_unit
-      | Failed e -> Lwt.fail e
-      | Connecting _ -> assert false
+      | Full channels ->
+        connection.conn <- Closing channels;
+      | Closing _ | Half _ | Closed | Failed _ -> ()
 
     let is_closed connection =
       match connection.conn with
       | Full _ -> false
       | Connecting _ -> false
-      | Half _ -> true
+      | Closing _ | Half _ -> true (* really ? *)
       | Closed | Failed _ -> true
 
-    let request connection ?(body = `Empty) req =
-      let res, res_r = Lwt.wait () in
-      (* give reader a chance to read possible EOF. *)
-      Lwt.pause () >>= Lwt.pause >>= Lwt.pause >>= fun () ->
-      Lwt_mutex.with_lock connection.mutex begin fun () ->
-        match connection.conn with
-        | Full (_, oc) ->
-          Queue.push {req; body; res_r; res} connection.in_flight;
-          Lwt_condition.broadcast connection.condition ();
-          Lwt.catch
-            begin fun () -> (* try *)
-              Request.write (fun writer ->
-                  Body.write_body (Request.write_body writer) body
-                ) req oc
-            end
-            begin fun e -> (* with *)
-              (try Net.close_out oc with _ -> ());
-              Lwt.wakeup_later_exn res_r e;
-              Lwt.return_unit
-            end
-        | Half _ | Closed ->
-          Lwt.wakeup_later_exn res_r Retry;
-          Lwt.return_unit
-        | Failed e ->
-          Lwt.wakeup_later_exn res_r e;
-          Lwt.return_unit
-        | Connecting _ -> assert false
-      end >>= fun () ->
-      res
+    let rec reader connection =
+      match connection.conn with
+      | Connecting _ -> assert false
+      | Closed | Failed _ -> assert false
+      | Full (ic, _) | Closing (ic, _) | Half ic ->
+        log connection "reader waiting";
+        Response.read ic >>= fun res ->
+        match res with
+        | `Ok res ->
+          log connection "reader got response";
+          (* don't take from queue yet, because body may still be in flight *)
+          let {req; res_r; _} = Queue.peek connection.in_flight in
 
+          (* A response header to a HEAD request is indistinguishable from a
+           * response header to a GET request. Therefore look at the request. *)
+          if
+            match Response.has_body res with
+            | _ when Request.meth req = `HEAD -> false
+            | `No -> false
+            | `Yes | `Unknown -> true
+          then begin
+            let stream =
+              Body.create_stream
+                Response.read_body_chunk
+                (Response.make_body_reader res ic)
+            in
+            (* finalise could run in a thread different from the lwt main thread.
+             * You may therefore not call into Lwt from a finaliser. *)
+            let closed = ref false in
+            Gc.finalise_last
+              begin fun () ->
+                if not !closed then
+                  Log.warn (fun m ->
+                      m
+                        "Body not consumed, leaking stream! Refer to \
+                         https://github.com/mirage/ocaml-cohttp/issues/730 for \
+                         additional details")
+              end
+              stream;
+            Lwt.wakeup_later res_r (res, Body.of_stream stream);
+            Lwt_stream.closed stream >>= fun () ->
+            closed := true;
+            log connection "body finished";
+            Queue.take connection.in_flight |> ignore;
+            Lwt_condition.broadcast connection.condition ();
+            reader connection
+          end
+          else begin
+            Queue.take connection.in_flight |> ignore;
+            Lwt_condition.broadcast connection.condition ();
+            Lwt.wakeup_later res_r (res, `Empty);
+            reader connection;
+          end
+        | `Eof ->
+          log connection "read EOF";
+          begin match connection.conn with
+          | Full (_, oc) | Closing (_, oc) ->
+            Net.close_out oc;
+            connection.conn <- Closed
+          | Half _ ->
+            connection.conn <- Closed
+          (* Failed is no special case since we read proper EOF. *)
+          | Closed | Failed _ -> ()
+          | Connecting _ -> assert false
+          end;
+          connection.finalise connection >>= fun () ->
+          queue_fail connection connection.in_flight Retry;
+          Lwt.return_unit
+        | `Invalid reason ->
+          let e = Failure ("Cohttp_lwt failed to read response: " ^ reason) in
+          connection.conn <- Failed e;
+          connection.finalise connection >>= fun () ->
+          queue_fail connection connection.in_flight e;
+          Lwt.return_unit
+
+    let request connection ?(body = `Empty) req =
+      match connection.conn with
+      | Connecting _ | Full _ ->
+        log connection ("queueing request " ^ Request.resource req);
+        let res, res_r = Lwt.wait () in
+        Queue.push {req; body; res_r; res} connection.waiting;
+        log connection "request queued";
+        Lwt_condition.broadcast connection.condition ();
+        log connection "broadcast sent";
+        res
+      | Closing _ | Half _ | Closed | Failed _ -> log connection "request rejected - Retry"; Lwt.fail Retry
+
+    let rec writer connection =
+      log connection "entering writer";
+      match connection.conn with
+      | Full _ when Queue.is_empty connection.waiting ->
+        Lwt.try_bind (fun () -> Lwt_condition.wait connection.condition)
+          (fun _ -> writer connection)
+          (fun _ -> writer connection)
+      | Closing (ic, oc) when Queue.is_empty connection.waiting ->
+        connection.conn <- Half ic;
+        Net.close_out oc;
+        Lwt.return_unit
+      | Full (ic, oc)
+      | Closing (ic, oc) ->
+        log connection "writer got something in queue";
+        let {req; body; res_r; _} as work = Queue.take connection.waiting in
+        Queue.push work connection.in_flight;
+        Lwt_condition.broadcast connection.condition ();
+        Lwt.catch
+          begin fun () -> (* try *)
+            log connection "writing";
+            Request.write (fun writer ->
+                Body.write_body (Request.write_body writer) body
+              ) req oc
+          end
+          begin fun e -> (* with *)
+            log connection "writing failed";
+            (try Net.close_out oc with _ -> ());
+            (* XXX empty waiting queue ? *)
+            connection.conn <- Half ic;
+            Lwt.wakeup_later_exn res_r e;
+            Lwt.return_unit
+          end
+        >>= fun () ->
+        writer connection
+      | Failed e ->
+        queue_fail connection connection.waiting e;
+        Lwt.return_unit
+      | Half _ | Closed -> Lwt.return_unit
+      | Connecting _ -> assert false
+
+    let counter = ref 0
     let connect
         ?(finalise=fun _ -> Lwt.return_unit)
         ?(ctx=Net.default_ctx)
         uri
       =
-      let mutex = Lwt_mutex.create () in
-      Lwt.async (fun () -> Lwt_mutex.lock mutex);
       let channels =
         Net.connect_uri ~ctx uri >|= fun (_, ic, oc) ->
         (ic, oc)
@@ -210,21 +260,25 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
       let connection =
         { finalise
         ; in_flight = Queue.create ()
+        ; waiting = Queue.create ()
         ; conn = Connecting channels
-        ; mutex
         ; condition = Lwt_condition.create ()
+        ; id = !counter
         }
       in
+      incr counter;
       Lwt.on_any channels
         begin fun channels ->
+          log connection "Connected";
           connection.conn <- Full channels;
-          Lwt_mutex.unlock connection.mutex;
           Lwt.async (fun () -> reader connection);
+          Lwt.async (fun () -> writer connection);
         end
         begin fun e ->
-          connection.conn <- Failed e;
-          Lwt_mutex.unlock connection.mutex;
+          log connection "connecting failed";
+          connection.conn <- Failed e
         end;
+      log connection "created";
       connection
   end
 
@@ -244,7 +298,8 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           | `Empty | `String _ | `Strings _ -> Lwt.return_unit
           | `Stream stream ->
             Lwt_stream.closed stream >>= fun () ->
-            Connection.close connection
+            Connection.close connection;
+            Lwt.return_unit
         end;
         res
     end
@@ -259,7 +314,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let strip_uri uri =
       Uri.(make ?scheme:(scheme uri) ?host:(host uri) ?port:(port uri) ())
 
-    let cache ?ctx:ctx ?(keep=60_000) ?(retry=2) ?(parallel=4) ?(depth=1) () =
+    let cache ?ctx:ctx ?(keep=60_000) ?(retry=2) ?(parallel=1) ?(depth=1) () =
       object(self)
         val mutable cache :Connection.t list Uri_map.t = Uri_map.empty
         val mutex = Lwt_mutex.create ()
@@ -272,6 +327,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
             if conns = []
             then cache <- cache |> Uri_map.remove addr
             else cache <- cache |> Uri_map.add addr conns;
+            prerr_endline "removed from cache";
             Lwt.return_unit
           in
           let connect () =
@@ -282,9 +338,10 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
               if Connection.length connection = 0 then begin
                 timeout :=
                   Time.sleep_ns Int64.(mul (of_int keep) 1_000_000L) >>= fun () ->
-                  Connection.close connection (* failure is ignored *)
+                  Connection.close connection; (* failure is ignored *)
+                  Lwt.return_unit
               end;
-              Lwt.on_success (Connection.notify connection) busy
+              Lwt.on_termination (Connection.notify connection) busy
             in busy ();
             connection
           in
@@ -328,18 +385,19 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
           let addr = strip_uri (Request.uri req) in
           let rec request retry =
             self#get_connection addr >>= fun conn ->
+            prerr_endline "cache: got connection";
             Lwt.catch (fun () -> Connection.request conn ?body req)
               begin function
               | Retry as e ->
                 begin match body with
-                | Some `Stream _ -> Lwt.fail Retry
+                | Some `Stream _ -> prerr_endline "cannot retry because of stream body"; Lwt.fail Retry
                 | None | Some `Empty | Some `String _ | Some `Strings _ ->
-                  Printf.eprintf "Got Retry %u retries left\n" retry;
+                  Printf.eprintf "Got Retry. %u retries left\n" retry;
                   if retry <= 0
                   then Lwt.fail e
                   else request (retry - 1)
                 end
-              | e -> Lwt.fail e
+              | e -> prerr_endline "Connection.request failed"; Lwt.fail e
               end
           in
           request retry

@@ -46,7 +46,8 @@ module type Client = sig
       Uri.t -> (* XXX this should actually be something like Conduit.endp *)
       t
 
-    val close : t -> unit Lwt.t
+    val shutdown : t -> unit
+    val close : t -> unit
     val is_closed : t -> bool
     val notify : t -> unit Lwt.t
     val length : t -> int
