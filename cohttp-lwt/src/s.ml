@@ -58,7 +58,7 @@ module type Client = sig
       (Cohttp.Response.t * Body.t) Lwt.t
   end
 
-  module Conn_cache : sig
+  module Connection_cache : sig
     include Cohttp.Conn_cache.S
       with type 'a promise := 'a Lwt.t
        and type body := Body.t
