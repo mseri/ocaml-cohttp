@@ -3,7 +3,7 @@ module Header = Cohttp.Header
 
 exception Retry
 
-module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S) = struct
+module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Sleep : S.Sleep) = struct
   module IO = IO
   module Response = Make.Response (IO)
   module Request = Make.Request (IO)
@@ -311,7 +311,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
     let strip_uri uri =
       Uri.(make ?scheme:(scheme uri) ?host:(host uri) ?port:(port uri) ())
 
-    let cache ?ctx:ctx ?(keep=60_000) ?(retry=2) ?(parallel=1) ?(depth=1) () =
+    let cache ?ctx:ctx ?(keep=60_000_000_000L) ?(retry=2) ?(parallel=1) ?(depth=1) () =
       object(self)
         val mutable cache :Connection.t list Uri_map.t = Uri_map.empty
         val mutex = Lwt_mutex.create ()
@@ -333,7 +333,7 @@ module Make (IO : S.IO) (Net : S.Net with module IO = IO) (Time : Mirage_time.S)
               Lwt.cancel !timeout;
               if Connection.length connection = 0 then begin
                 timeout :=
-                  Time.sleep_ns Int64.(mul (of_int keep) 1_000_000L) >>= fun () ->
+                  Sleep.sleep_ns keep >>= fun () ->
                   Connection.close connection; (* failure is ignored *)
                   Lwt.return_unit
               end;

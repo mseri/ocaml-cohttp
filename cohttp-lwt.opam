@@ -30,7 +30,6 @@ depends: [
   "http" {= version}
   "cohttp" {= version}
   "lwt" {>= "2.5.0"}
-  "mirage-time"
   "sexplib0"
   "ppx_sexp_conv" {>= "v0.13.0"}
   "logs"

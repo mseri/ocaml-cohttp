@@ -36,7 +36,6 @@ depends: [
   "lwt" {>= "3.0.0"}
   "conduit-lwt" {>= "5.0.0"}
   "conduit-lwt-unix" {>= "5.0.0"}
-  "mirage-time-unix"
   "fmt" {>= "0.8.2"}
   "base-unix"
   "ppx_sexp_conv" {>= "v0.13.0"}

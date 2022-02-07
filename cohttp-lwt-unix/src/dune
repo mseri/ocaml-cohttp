@@ -15,5 +15,4 @@
   http
   cohttp
   cohttp-lwt
-  mirage-time-unix
   logs.fmt))

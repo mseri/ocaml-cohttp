@@ -29,6 +29,10 @@ module type Net = sig
   val close : IO.ic -> IO.oc -> unit
 end
 
+module type Sleep = sig
+  val sleep_ns : int64 -> unit Lwt.t
+end
+
 (** The [Client] module implements non-pipelined single HTTP client calls. Each
     call will open a separate {!Net} connection. For best results, the {!Body}
     that is returned should be consumed in order to close the file descriptor in
@@ -71,7 +75,7 @@ module type Client = sig
     val no_cache :?ctx:ctx -> unit -> t
     val cache :
       ?ctx:ctx ->
-      ?keep:int ->
+      ?keep:int64 ->
       ?retry:int ->
       ?parallel:int ->
       ?depth:int ->
