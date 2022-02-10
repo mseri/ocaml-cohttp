@@ -3,6 +3,18 @@
 
 include Cohttp_lwt.S.Client with type ctx = Net.ctx
 
+module Connection_cache : sig
+  include Cohttp_lwt.S.Connection_cache
+
+  val create :
+    ?ctx:ctx ->
+    ?keep:int64 ->
+    ?retry:int ->
+    ?parallel:int ->
+    ?depth:int ->
+    unit -> t
+end
+
 val custom_ctx :
   ?ctx:Conduit_lwt_unix.ctx -> ?resolver:Resolver_lwt.t -> unit -> ctx
 (** [custom_ctx ?ctx ?resolver ()] will return a context that is the same as the

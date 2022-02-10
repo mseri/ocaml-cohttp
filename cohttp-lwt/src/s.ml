@@ -33,6 +33,40 @@ module type Sleep = sig
   val sleep_ns : int64 -> unit Lwt.t
 end
 
+exception Retry
+
+module type Connection = sig
+  module IO : IO
+
+  type ctx
+  type t
+
+  val connect :
+    ?finalise:(t -> unit IO.t) ->
+    ?persistent:bool ->
+    ?ctx:ctx ->
+    Uri.t -> (* XXX this should actually be something like Conduit.endp *)
+    t
+
+  val shutdown : t -> unit
+  val close : t -> unit
+  val is_closed : t -> bool
+  val notify : t -> unit IO.t
+  val length : t -> int
+
+  val request : t ->
+    ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t
+end
+
+module type Connection_cache = sig
+  module IO : IO
+
+  type t
+
+  val request : t ->
+    ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t
+end
+
 (** The [Client] module implements non-pipelined single HTTP client calls. Each
     call will open a separate {!Net} connection. For best results, the {!Body}
     that is returned should be consumed in order to close the file descriptor in
@@ -41,46 +75,11 @@ end
 module type Client = sig
   type ctx
 
-  module Connection : sig
-    type t
+  module Connection : Connection with type ctx = ctx
 
-    val connect :
-      ?finalise:(t -> unit Lwt.t) ->
-      ?persistent:bool ->
-      ?ctx:ctx ->
-      Uri.t -> (* XXX this should actually be something like Conduit.endp *)
-      t
-
-    val shutdown : t -> unit
-    val close : t -> unit
-    val is_closed : t -> bool
-    val notify : t -> unit Lwt.t
-    val length : t -> int
-
-    val request :
-      t ->
-      ?body:Body.t ->
-      Cohttp.Request.t ->
-      (Cohttp.Response.t * Body.t) Lwt.t
-  end
-
-  module Connection_cache : sig
-    type t
-
-    val set_default : t -> unit
-
-    val request : ?cache:t -> ?body:Body.t -> Cohttp.Request.t ->
-      (Cohttp.Response.t * Body.t) Lwt.t
-
-    val no_cache :?ctx:ctx -> unit -> t
-    val cache :
-      ?ctx:ctx ->
-      ?keep:int64 ->
-      ?retry:int ->
-      ?parallel:int ->
-      ?depth:int ->
-      unit -> t
-  end
+  val set_cache :
+    (?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) Lwt.t) ->
+    unit
 
   val call :
     ?ctx:ctx ->

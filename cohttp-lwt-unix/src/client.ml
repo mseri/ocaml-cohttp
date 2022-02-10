@@ -3,6 +3,8 @@ module Sleep = struct
     Lwt_unix.sleep (Int64.to_float ns /. 1_000_000_000.)
 end
 
-include Cohttp_lwt.Make_client (Io) (Net) (Sleep)
+include Cohttp_lwt.Make_client (Io) (Net)
+
+module Connection_cache = Cohttp_lwt.Make_connection_cache (Connection) (Sleep)
 
 let custom_ctx = Net.init

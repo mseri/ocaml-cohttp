@@ -73,5 +73,6 @@ struct
   let with_authenticator a ctx = { ctx with Net_IO.authenticator = Some a }
 
   (* Build all the core modules from the [Cohttp_lwt] functors *)
-  include Cohttp_lwt.Make_client (HTTP_IO) (Net_IO) (T)
+  include Cohttp_lwt.Make_client (HTTP_IO) (Net_IO)
+  module Connection_cache = Cohttp_lwt.Make_connection_cache (Connection) (T)
 end
