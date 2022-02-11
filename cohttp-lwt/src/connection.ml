@@ -7,6 +7,8 @@ struct
 
   open IO
 
+  exception Retry = S.Retry
+
   let src = Logs.Src.create "cohttp.lwt.client" ~doc:"Cohttp Lwt client"
 
   module Log = (val Logs.src_log src : Logs.LOG)
@@ -152,7 +154,7 @@ struct
         | Connecting _ -> assert false
         end;
         connection.finalise connection >>= fun () ->
-        queue_fail connection connection.in_flight S.Retry;
+        queue_fail connection connection.in_flight Retry;
         Lwt.return_unit
       | `Invalid reason ->
         let e = Failure ("Cohttp_lwt failed to read response: " ^ reason) in
@@ -168,7 +170,7 @@ struct
       Queue.push {req; body; res_r; res} connection.waiting;
       Lwt_condition.broadcast connection.condition ();
       res
-    | Closing _ | Half _ | Closed | Failed _ -> Lwt.fail S.Retry
+    | Closing _ | Half _ | Closed | Failed _ -> Lwt.fail Retry
 
   let rec writer connection =
     match connection.state with
@@ -196,7 +198,7 @@ struct
           Request.make ~meth:(meth req) ~version:(version req) ~encoding:(encoding req)
             ~headers:(Header.add headers "Connection" "close") (uri req)
       in
-      Queue.push work connection.in_flight;
+      Queue.push { work with req } connection.in_flight;
       Lwt_condition.broadcast connection.condition ();
       Lwt.catch
         begin fun () -> (* try *)
@@ -206,9 +208,9 @@ struct
         end
         begin fun e -> (* with *)
           (try Net.close_out oc with _ -> ());
-          (* XXX empty waiting queue ? *)
           connection.state <- Half ic;
           Lwt.wakeup_later_exn res_r e;
+          queue_fail connection connection.waiting Retry;
           Lwt.return_unit
         end
       >>= fun () ->
