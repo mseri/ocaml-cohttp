@@ -41,12 +41,19 @@ module type Connection = sig
   type ctx
   type t
 
-  val connect :
+  val create :
     ?finalise:(t -> unit IO.t) ->
     ?persistent:bool ->
     ?ctx:ctx ->
     Uri.t -> (* XXX this should actually be something like Conduit.endp *)
     t
+
+  val connect :
+    ?finalise:(t -> unit IO.t) ->
+    ?persistent:bool ->
+    ?ctx:ctx ->
+    Uri.t -> (* XXX this should actually be something like Conduit.endp *)
+    t IO.t
 
   val shutdown : t -> unit
   val close : t -> unit

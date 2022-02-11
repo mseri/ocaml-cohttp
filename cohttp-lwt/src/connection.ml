@@ -221,7 +221,7 @@ struct
     | Half _ | Closed -> Lwt.return_unit
     | Connecting _ -> assert false
 
-  let connect
+  let create
       ?(finalise=fun _ -> Lwt.return_unit)
       ?persistent
       ?(ctx=Net.default_ctx)
@@ -255,4 +255,11 @@ struct
         connection.state <- Failed e
       end;
     connection
+
+  let connect ?finalise ?persistent ?ctx uri =
+    let connection = create ?finalise ?persistent ?ctx uri in
+    match connection.state with
+    | Connecting channels ->
+      channels >>= fun _ -> Lwt.return connection
+    | _ -> Lwt.return connection
 end

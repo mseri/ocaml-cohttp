@@ -14,7 +14,7 @@ struct
 
   let create ?ctx () ?body req =
     let connection =
-      Connection.connect ?ctx ~persistent:false (Cohttp.Request.uri req)
+      Connection.create ?ctx ~persistent:false (Cohttp.Request.uri req)
     in
     let res = Connection.request connection ?body req in
     (* this can be simplified when https://github.com/mirage/ocaml-conduit/pull/319 is released. *)
@@ -85,8 +85,8 @@ struct
       else self.cache <- self.cache |> Uri_map.add addr conns;
       Lwt.return_unit
     in
-    let connect () =
-      let connection = Connection.connect ~finalise ?ctx:self.ctx addr
+    let create () =
+      let connection = Connection.create ~finalise ?ctx:self.ctx addr
       and timeout = ref Lwt.return_unit in
       let rec busy () =
         Lwt.cancel !timeout;
@@ -102,7 +102,7 @@ struct
     in
     match Uri_map.find_opt addr self.cache with
     | None ->
-      let connection = connect () in
+      let connection = create () in
       self.cache <- self.cache |> Uri_map.add addr [connection];
       Lwt.return connection
     | Some conns ->
@@ -119,7 +119,7 @@ struct
       | shallowest, _ when Connection.length shallowest = 0 ->
         Lwt.return shallowest
       | _, length when length < self.parallel ->
-        let connection = connect () in
+        let connection = create () in
         self.cache <- self.cache |> Uri_map.add addr (connection :: conns);
         Lwt.return connection
       | shallowest, _ when Connection.length shallowest < self.depth ->

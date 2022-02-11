@@ -66,7 +66,7 @@ struct
     post ?ctx ~chunked:false ~headers ~body uri
 
   let callv ?ctx uri reqs =
-    let connection = Connection.connect ?ctx uri
+    let connection = Connection.create ?ctx uri
     and mutex = Lwt_mutex.create () in
     Lwt.return @@ Lwt_stream.from @@ fun () ->
     Lwt_stream.get reqs >>= function
