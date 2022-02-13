@@ -23,7 +23,9 @@ module type Net = sig
   type ctx [@@deriving sexp_of]
 
   val default_ctx : ctx
-  val connect_uri : ctx:ctx -> Uri.t -> (IO.conn * IO.ic * IO.oc) Lwt.t
+  val resolve : ctx:ctx -> Uri.t -> Conduit.endp IO.t
+  val connect_uri : ctx:ctx -> Uri.t -> (IO.conn * IO.ic * IO.oc) IO.t
+  val connect_endp : ctx:ctx -> Conduit.endp -> (IO.conn * IO.ic * IO.oc) IO.t
   val close_in : IO.ic -> unit
   val close_out : IO.oc -> unit
   val close : IO.ic -> IO.oc -> unit
@@ -36,33 +38,32 @@ end
 exception Retry
 
 module type Connection = sig
-  module IO : IO
+  module Net : Net
 
-  type ctx
   type t
 
   val create :
-    ?finalise:(t -> unit IO.t) ->
+    ?finalise:(t -> unit Net.IO.t) ->
     ?persistent:bool ->
-    ?ctx:ctx ->
-    Uri.t -> (* XXX this should actually be something like Conduit.endp *)
+    ?ctx:Net.ctx ->
+    Conduit.endp ->
     t
 
   val connect :
-    ?finalise:(t -> unit IO.t) ->
+    ?finalise:(t -> unit Net.IO.t) ->
     ?persistent:bool ->
-    ?ctx:ctx ->
-    Uri.t -> (* XXX this should actually be something like Conduit.endp *)
-    t IO.t
+    ?ctx:Net.ctx ->
+    Conduit.endp ->
+    t Net.IO.t
 
   val shutdown : t -> unit
   val close : t -> unit
   val is_closed : t -> bool
-  val notify : t -> unit IO.t
+  val notify : t -> unit Net.IO.t
   val length : t -> int
 
   val request : t ->
-    ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t
+    ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) Net.IO.t
 end
 
 module type Connection_cache = sig
@@ -82,7 +83,7 @@ end
 module type Client = sig
   type ctx
 
-  module Connection : Connection with type ctx = ctx
+  module Connection : Connection with type Net.ctx = ctx
 
   val set_cache :
     (?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) Lwt.t) ->

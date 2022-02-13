@@ -1,5 +1,6 @@
-module Make (Net : S.Net) : (S.Connection with type ctx = Net.ctx) =
+module Make (Net : S.Net) : (S.Connection with module Net = Net) =
 struct
+  module Net = Net
   module IO = Net.IO
   module Response = Make.Response (IO)
   module Request = Make.Request (IO)
@@ -12,8 +13,6 @@ struct
   let src = Logs.Src.create "cohttp.lwt.client" ~doc:"Cohttp Lwt client"
 
   module Log = (val Logs.src_log src : Logs.LOG)
-
-  type ctx = Net.ctx
 
   type state =
     | Connecting of (IO.ic * IO.oc) Lwt.t
@@ -225,7 +224,7 @@ struct
       ?(finalise=fun _ -> Lwt.return_unit)
       ?persistent
       ?(ctx=Net.default_ctx)
-      uri
+      endp
     =
     let persistent = match persistent with
       | None -> `Unknown
@@ -233,7 +232,7 @@ struct
       | Some false -> `False
     in
     let channels =
-      Net.connect_uri ~ctx uri >>= fun (_, ic, oc) ->
+      Net.connect_endp ~ctx endp >>= fun (_, ic, oc) ->
       return (ic, oc)
     in
     let connection =

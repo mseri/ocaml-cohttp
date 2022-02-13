@@ -1,21 +1,22 @@
 module Make_no_cache (Connection : S.Connection) : sig
-  include S.Connection_cache with module IO = Connection.IO
+  include S.Connection_cache with module IO = Connection.Net.IO
 
-  val create : ?ctx:Connection.ctx -> unit -> t
+  val create : ?ctx:Connection.Net.ctx -> unit -> t
 end
 =
 struct
-  module IO = Connection.IO
+  module Net = Connection.Net
+  module IO = Net.IO
   open IO
 
   type t = ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t
 
   let request = Fun.id
 
-  let create ?ctx () ?body req =
-    let connection =
-      Connection.create ?ctx ~persistent:false (Cohttp.Request.uri req)
-    in
+  let create ?(ctx = Net.default_ctx) () ?body req =
+    Net.resolve ~ctx (Cohttp.Request.uri req)
+    >>= Connection.connect ~ctx ~persistent:false
+    >>= fun connection ->
     let res = Connection.request connection ?body req in
     (* this can be simplified when https://github.com/mirage/ocaml-conduit/pull/319 is released. *)
     Lwt.async begin fun () ->
@@ -31,12 +32,10 @@ struct
 end
 
 module Make (Connection : S.Connection) (Sleep : S.Sleep) : sig
-  include S.Connection_cache with module IO = Connection.IO
-
-  type ctx = Connection.ctx
+  include S.Connection_cache with module IO = Connection.Net.IO
 
   val create :
-    ?ctx:ctx ->
+    ?ctx:Connection.Net.ctx ->
     ?keep:int64 ->
     ?retry:int ->
     ?parallel:int ->
@@ -45,19 +44,21 @@ module Make (Connection : S.Connection) (Sleep : S.Sleep) : sig
 end
 =
 struct
-  module IO = Connection.IO
+  module Net = Connection.Net
+  module IO = Net.IO
   open IO
 
-  type ctx = Connection.ctx
+  type ctx = Net.ctx
 
   exception Retry = S.Retry
 
-  module Uri_map = Map.Make (Uri)
+  module Endp_map =
+    Map.Make (struct type t = Conduit.endp let compare = compare end)
 
   (* type t = < request : ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t > *)
   type t =
-    { mutable cache : Connection.t list Uri_map.t
-    ; ctx : ctx option
+    { mutable cache : Connection.t list Endp_map.t
+    ; ctx : ctx
     ; keep : int64
     ; retry : int
     ; parallel : int
@@ -71,22 +72,22 @@ struct
    * The downside is that some resolver redirections may break.
    *)
 
-  let create ?ctx ?(keep=60_000_000_000L) ?(retry=2) ?(parallel=4) ?(depth=100) () =
-    { cache = Uri_map.empty
+  let create ?(ctx = Net.default_ctx) ?(keep=60_000_000_000L) ?(retry=2) ?(parallel=4) ?(depth=100) () =
+    { cache = Endp_map.empty
     ; ctx ; keep ; retry ; parallel ; depth
     }
 
-  let rec get_connection self addr =
+  let rec get_connection self endp =
     let finalise connection =
-      let conns = Uri_map.find addr self.cache in
+      let conns = Endp_map.find endp self.cache in
       let conns = List.filter ((!=) connection) conns in
       if conns = []
-      then self.cache <- self.cache |> Uri_map.remove addr
-      else self.cache <- self.cache |> Uri_map.add addr conns;
+      then self.cache <- self.cache |> Endp_map.remove endp
+      else self.cache <- self.cache |> Endp_map.add endp conns;
       Lwt.return_unit
     in
     let create () =
-      let connection = Connection.create ~finalise ?ctx:self.ctx addr
+      let connection = Connection.create ~finalise ~ctx:self.ctx endp
       and timeout = ref Lwt.return_unit in
       let rec busy () =
         Lwt.cancel !timeout;
@@ -100,10 +101,10 @@ struct
       in busy ();
       connection
     in
-    match Uri_map.find_opt addr self.cache with
+    match Endp_map.find_opt endp self.cache with
     | None ->
       let connection = create () in
-      self.cache <- self.cache |> Uri_map.add addr [connection];
+      self.cache <- self.cache |> Endp_map.add endp [connection];
       Lwt.return connection
     | Some conns ->
       let rec search length = function
@@ -120,23 +121,20 @@ struct
         Lwt.return shallowest
       | _, length when length < self.parallel ->
         let connection = create () in
-        self.cache <- self.cache |> Uri_map.add addr (connection :: conns);
+        self.cache <- self.cache |> Endp_map.add endp (connection :: conns);
         Lwt.return connection
       | shallowest, _ when Connection.length shallowest < self.depth ->
         Lwt.return shallowest
       | _ ->
         Lwt.try_bind
           (fun () -> conns |> List.map Connection.notify |> Lwt.choose)
-          (fun _ -> get_connection self addr)
-          (fun _ -> get_connection self addr)
-
-  let strip_uri uri =
-    Uri.(make ?scheme:(scheme uri) ?host:(host uri) ?port:(port uri) ())
+          (fun _ -> get_connection self endp)
+          (fun _ -> get_connection self endp)
 
   let request self ?body req =
-    let addr = strip_uri (Cohttp.Request.uri req) in
+    Net.resolve ~ctx:self.ctx (Cohttp.Request.uri req) >>= fun endp ->
     let rec request retry =
-      get_connection self addr >>= fun conn ->
+      get_connection self endp >>= fun conn ->
       Lwt.catch (fun () -> Connection.request conn ?body req)
         begin function
         | Retry as e ->
