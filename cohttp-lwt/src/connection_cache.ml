@@ -52,8 +52,7 @@ struct
 
   exception Retry = S.Retry
 
-  module Endp_map =
-    Map.Make (struct type t = Conduit.endp let compare = compare end)
+  module Endp_map = Map.Make (Net.Endp)
 
   (* type t = < request : ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t > *)
   type t =

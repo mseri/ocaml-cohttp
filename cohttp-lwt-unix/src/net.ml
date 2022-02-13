@@ -33,6 +33,11 @@ let default_ctx =
     ctx = Lazy.force Conduit_lwt_unix.default_ctx;
   }
 
+module Endp = struct
+  type t = Conduit.endp
+  let compare = compare
+end
+
 let resolve ~ctx uri = Resolver_lwt.resolve_uri ~uri ctx.resolver
 
 let connect_endp ~ctx:{ ctx; _ } endp =

@@ -22,10 +22,12 @@ module type Net = sig
 
   type ctx [@@deriving sexp_of]
 
+  module Endp : Map.OrderedType
+
   val default_ctx : ctx
-  val resolve : ctx:ctx -> Uri.t -> Conduit.endp IO.t
+  val resolve : ctx:ctx -> Uri.t -> Endp.t IO.t
   val connect_uri : ctx:ctx -> Uri.t -> (IO.conn * IO.ic * IO.oc) IO.t
-  val connect_endp : ctx:ctx -> Conduit.endp -> (IO.conn * IO.ic * IO.oc) IO.t
+  val connect_endp : ctx:ctx -> Endp.t -> (IO.conn * IO.ic * IO.oc) IO.t
   val close_in : IO.ic -> unit
   val close_out : IO.oc -> unit
   val close : IO.ic -> IO.oc -> unit
@@ -46,14 +48,14 @@ module type Connection = sig
     ?finalise:(t -> unit Net.IO.t) ->
     ?persistent:bool ->
     ?ctx:Net.ctx ->
-    Conduit.endp ->
+    Net.Endp.t ->
     t
 
   val connect :
     ?finalise:(t -> unit Net.IO.t) ->
     ?persistent:bool ->
     ?ctx:Net.ctx ->
-    Conduit.endp ->
+    Net.Endp.t ->
     t Net.IO.t
 
   val shutdown : t -> unit

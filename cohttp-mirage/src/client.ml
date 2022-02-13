@@ -44,6 +44,11 @@ struct
     let default_ctx =
       { resolver = R.localhost; conduit = None; authenticator = None }
 
+    module Endp = struct
+      type t = Conduit.endp
+      let compare = compare
+    end
+
     let resolve ~ctx uri = R.resolve_uri ~uri ctx.resolver
 
     let connect_endp ~ctx endp =
