@@ -31,7 +31,7 @@ struct
     res
 end
 
-module Make (Connection : S.Connection) (Sleep : S.Sleep) : sig
+module Make (Connection : S.Connection) (Sleep : S.Sleep with type 'a promise = 'a Lwt.t) : sig
   include S.Connection_cache with module IO = Connection.Net.IO
 
   val create :

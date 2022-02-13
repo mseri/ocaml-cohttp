@@ -77,7 +77,9 @@ struct
 
   (* Build all the core modules from the [Cohttp_lwt] functors *)
   include Cohttp_lwt.Make_client (HTTP_IO) (Net_IO)
-  module Connection_cache = Cohttp_lwt.Make_connection_cache (Connection) (T)
+  module Connection_cache = Cohttp_lwt.Make_connection_cache
+      (Connection)
+      (struct include T type 'a promise = 'a Lwt.t end)
 
   let ctx ?authenticator resolver conduit =
     { Net_IO.resolver; conduit = Some conduit; authenticator }

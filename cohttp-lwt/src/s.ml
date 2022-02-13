@@ -34,7 +34,8 @@ module type Net = sig
 end
 
 module type Sleep = sig
-  val sleep_ns : int64 -> unit Lwt.t
+  type 'a promise
+  val sleep_ns : int64 -> unit promise
 end
 
 exception Retry

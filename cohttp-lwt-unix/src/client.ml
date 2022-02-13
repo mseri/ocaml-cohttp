@@ -1,4 +1,5 @@
 module Sleep = struct
+  type 'a promise = 'a Lwt.t
   let sleep_ns ns =
     Lwt_unix.sleep (Int64.to_float ns /. 1_000_000_000.)
 end
