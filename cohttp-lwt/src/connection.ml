@@ -1,3 +1,6 @@
+(** Raised on failed requests that may be safely retried - even on
+    non-idempotent requests. Raised for example on timeout or
+    connection suhtdown by remote end. *)
 exception Retry
 
 module Make (Net : S.Net) : (S.Connection with module Net = Net) =
@@ -83,7 +86,7 @@ struct
     match connection.state with
     | Full _ -> false
     | Connecting _ -> false
-    | Closing _ | Half _ -> true (* really ? *)
+    | Closing _ | Half _ -> true
     | Closed | Failed _ -> true
 
   let rec reader connection =
