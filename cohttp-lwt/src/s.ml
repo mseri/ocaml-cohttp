@@ -92,6 +92,10 @@ module type Client = sig
     (?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) Lwt.t) ->
     unit
 
+  val request :
+    ?ctx:ctx ->
+    ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) Lwt.t
+
   val call :
     ?ctx:ctx ->
     ?headers:Http.Header.t ->

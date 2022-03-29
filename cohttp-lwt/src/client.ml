@@ -18,6 +18,11 @@ struct
 
   let set_cache c = cache := c
 
+  let request ?ctx =
+    match ctx with
+    | None -> !cache
+    | Some ctx -> No_cache.(request (create ~ctx ()))
+
   let call ?ctx ?headers ?(body = `Empty) ?chunked meth uri
     =
     let headers = match headers with None -> Header.init () | Some h -> h in
@@ -37,9 +42,7 @@ struct
         (Request.make_for_client ~headers ~chunked ~body_length meth uri,
          buf)
     end >>= fun (req,body) ->
-    match ctx with
-    | None -> !cache ~body req
-    | Some ctx -> No_cache.(request (create ~ctx ()) ~body req)
+    request ?ctx ~body req
 
   (* The HEAD should not have a response body *)
   let head ?ctx ?headers uri = call ?ctx ?headers `HEAD uri >|= fst
