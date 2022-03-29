@@ -1,3 +1,5 @@
+exception Retry
+
 module Make (Net : S.Net) : (S.Connection with module Net = Net) =
 struct
   module Net = Net
@@ -7,8 +9,6 @@ struct
   module Header = Cohttp.Header
 
   open IO
-
-  exception Retry = S.Retry
 
   let src = Logs.Src.create "cohttp.lwt.client" ~doc:"Cohttp Lwt client"
 

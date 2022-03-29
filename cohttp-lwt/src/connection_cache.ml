@@ -1,3 +1,5 @@
+exception Retry = Connection.Retry
+
 module Make_no_cache (Connection : S.Connection) : sig
   include S.Connection_cache with module IO = Connection.Net.IO
 
@@ -50,9 +52,6 @@ struct
 
   type ctx = Net.ctx
 
-  exception Retry = S.Retry
-
-  (* type t = < request : ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t) IO.t > *)
   type t =
     { cache : (Net.endp, Connection.t) Hashtbl.t
     ; ctx : ctx

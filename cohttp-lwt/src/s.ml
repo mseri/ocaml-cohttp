@@ -38,8 +38,6 @@ module type Sleep = sig
   val sleep_ns : int64 -> unit promise
 end
 
-exception Retry
-
 module type Connection = sig
   module Net : Net
 

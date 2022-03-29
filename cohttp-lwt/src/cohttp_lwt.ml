@@ -16,8 +16,6 @@
 
 module type IO = S.IO
 
-exception Retry = S.Retry
-
 module Request = Cohttp.Request [@@deprecated "Use Cohttp.Request directly"]
 module Response = Cohttp.Response [@@deprecated "Use Cohttp.Response directly"]
 module Make_connection = Connection.Make
