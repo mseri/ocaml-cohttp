@@ -201,7 +201,6 @@ struct
             ~headers:(Header.add headers "Connection" "close") (uri req)
       in
       Queue.push { work with req } connection.in_flight;
-      Lwt_condition.broadcast connection.condition ();
       Lwt.catch
         begin fun () -> (* try *)
           Request.write (fun writer ->
