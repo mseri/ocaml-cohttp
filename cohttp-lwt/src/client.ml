@@ -1,4 +1,5 @@
-open Lwt.Infix module Header = Cohttp.Header
+open Lwt.Infix
+module Header = Cohttp.Header
 
 module Make (IO : S.IO) (Net : S.Net) =
 struct
