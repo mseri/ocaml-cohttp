@@ -1,7 +1,7 @@
 (** The [Client] module implements the full UNIX HTTP client interface,
     including the UNIX-specific functions defined in {!C}. *)
 
-include Cohttp_lwt.S.Client with type ctx := Net.ctx
+include Cohttp_lwt.S.Client with type ctx = Net.ctx
 
 module Connection_cache : sig
   include Cohttp_lwt.S.Connection_cache
