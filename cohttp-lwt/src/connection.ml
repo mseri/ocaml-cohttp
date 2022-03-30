@@ -73,7 +73,7 @@ struct
     | Connecting channels ->
       Lwt.async @@ fun () ->
       channels >>= fun channels ->
-      (* need to loose possible race with writer *)
+      (* need to lose possible race with writer *)
       Lwt.pause () >>= fun () ->
       connection.state <- Closing channels;
       Lwt.return_unit
