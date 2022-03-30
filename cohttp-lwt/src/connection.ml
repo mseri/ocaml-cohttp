@@ -27,8 +27,7 @@ struct
   type req_resr =
     { req :Request.t
     ; body :Body.t
-    ; res_r :(Response.t * Body.t) Lwt.u
-    ; res :(Response.t * Body.t) Lwt.t }
+    ; res_r :(Response.t * Body.t) Lwt.u }
   type persistent = [ `True | `False | `Unknown ]
   type t =
     { mutable state :state
@@ -169,7 +168,7 @@ struct
     match connection.state with
     | Connecting _ | Full _ ->
       let res, res_r = Lwt.wait () in
-      Queue.push {req; body; res_r; res} connection.waiting;
+      Queue.push {req; body; res_r} connection.waiting;
       Lwt_condition.broadcast connection.condition ();
       res
     | Closing _ | Half _ | Closed | Failed _ -> Lwt.fail Retry
