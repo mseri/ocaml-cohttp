@@ -154,12 +154,12 @@ struct
       get_connection self endp >>= fun conn ->
       Lwt.catch (fun () -> Connection.request conn ?body req)
         begin function
-        | Retry as e ->
+        | Retry ->
           begin match body with
           | Some `Stream _ -> Lwt.fail Retry
           | None | Some `Empty | Some `String _ | Some `Strings _ ->
             if retry <= 0
-            then Lwt.fail e
+            then Lwt.fail Retry
             else request (retry - 1)
           end
         | e -> Lwt.fail e
