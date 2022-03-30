@@ -8,12 +8,6 @@ struct
 
   type ctx = Net.ctx
 
-  let is_meth_chunked = function
-    | `HEAD -> false
-    | `GET -> false
-    | `DELETE -> false
-    | _ -> true
-
   let cache = ref No_cache.(request (create ()))
 
   let set_cache c = cache := c
@@ -25,23 +19,14 @@ struct
 
   let call ?ctx ?headers ?(body = `Empty) ?chunked meth uri
     =
-    let headers = match headers with None -> Header.init () | Some h -> h in
-    let chunked =
-      match chunked with None -> is_meth_chunked meth | Some v -> v
-    in
-    begin
-      if chunked
-      then
-        Lwt.return
-          (Request.make_for_client ~headers ~chunked meth uri,
-           body)
-      else
-        (* If chunked is not allowed, then obtain the body length and
-           insert header *)
-        Body.length body >|= fun (body_length, buf) ->
-        (Request.make_for_client ~headers ~chunked ~body_length meth uri,
-         buf)
-    end >>= fun (req,body) ->
+    begin match chunked with
+      | None -> Lwt.return (Cohttp.Transfer.Unknown, body)
+      | Some true -> Lwt.return (Cohttp.Transfer.Chunked, body)
+      | Some false ->
+        Body.length body >|= fun (length, body) ->
+        Cohttp.Transfer.Fixed length, body
+    end >>= fun (encoding, body) ->
+    let req = Request.make ?headers ~meth ~encoding uri in
     request ?ctx ~body req
 
   (* The HEAD should not have a response body *)

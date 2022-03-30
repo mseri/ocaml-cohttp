@@ -96,6 +96,9 @@ module type Connection = sig
       requests may be sent even before receiving any reply. By default
       we wait for the first response to decide whether connection
       keep-alive and pipelining is suppored.
+      Chunked encoding can only be used when pipelining is supported.
+      Therefore better avoid using chunked encoding on the very
+      first request.
       @param ctx See [Net.ctx]
       @param endp The remote address, port and protocol to connect to.
   *)
