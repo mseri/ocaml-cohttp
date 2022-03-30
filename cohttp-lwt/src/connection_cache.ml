@@ -144,7 +144,7 @@ struct
         Lwt.return shallowest
       | _ ->
         Lwt.try_bind
-          (fun () -> conns |> List.map Connection.notify |> Lwt.choose)
+          (fun () -> Lwt.choose (List.map Connection.notify conns))
           (fun _ -> get_connection self endp)
           (fun _ -> get_connection self endp)
 
