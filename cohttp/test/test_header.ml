@@ -58,9 +58,6 @@ let valid_set_cookie () =
   aes "header value 1.1"
     "Domain=ocaml.org; Max-Age=100; Path=/foo/bar; Version=1" v
 
-let cookie_printer x =
-  String.concat "; " (List.map (fun (x, y) -> x ^ ":" ^ y) x)
-
 let t_cookies = Alcotest.(list (pair string string))
 
 let cookie_with_eq_val () =
@@ -87,10 +84,6 @@ let valid_cookie () =
   let h = Cohttp.Header.of_list [ (k, v) ] in
   let cookies = Cohttp.Cookie.Cookie_hdr.extract h in
   Alcotest.check t_cookies "headers" [ ("foo", "bar"); ("a", "b") ] cookies
-
-let opt_printer f = function
-  | None -> "nothing"
-  | Some x -> Printf.sprintf "'%s'" (f x)
 
 let get_media_type () =
   let mt = " foo/bar ; charset=UTF-8" in
@@ -497,6 +490,7 @@ let () =
           ("extension star", `Quick, link_ext_star);
         ] );
       ("Media Type", [ ("Media Type", `Quick, get_media_type) ]);
+      ("Trim", [ ("Trim Whitespace", `Quick, trim_ws) ]);
       ("Auth", [ ("Valid Auth", `Quick, valid_auth) ]);
       ( "Cookie",
         [

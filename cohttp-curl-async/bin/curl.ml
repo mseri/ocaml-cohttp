@@ -3,10 +3,9 @@ module Curl = Cohttp_curl_async
 module Sexp = Sexplib0.Sexp
 open Async_kernel
 module Writer = Async_unix.Writer
-module Time = Core_kernel.Time
+module Time = Core.Time
 
 let ( let* ) x f = Deferred.bind x ~f
-let ( let+ ) x f = Deferred.map x ~f
 
 let client uri meth' () =
   let meth = Cohttp.Code.method_of_string meth' in
@@ -31,9 +30,6 @@ let client uri meth' () =
     Writer.flushed c
   in
   output_body (Lazy.force Writer.stdout)
-
-let debug =
-  match Sys.getenv_opt "COHTTP_CURL_DEBUG" with None -> false | Some _ -> true
 
 let _ =
   let open Async_command in
