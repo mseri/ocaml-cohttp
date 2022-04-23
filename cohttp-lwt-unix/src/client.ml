@@ -6,6 +6,6 @@ end
 
 include Cohttp_lwt.Make_client (Io) (Net)
 
-module Connection_cache = Cohttp_lwt.Make_connection_cache (Connection) (Sleep)
+module Connection_cache = Cohttp_lwt.Connection_cache.Make (Connection) (Sleep)
 
 let custom_ctx = Net.init
