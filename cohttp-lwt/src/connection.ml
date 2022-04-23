@@ -17,6 +17,8 @@ struct
 
   module Log = (val Logs.src_log src : Logs.LOG)
 
+  exception Retry = Retry
+
   type state =
     | Connecting of (IO.ic * IO.oc) Lwt.t
     (* Waiting for the TCP handshake / TLS connection setup *)

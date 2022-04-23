@@ -83,6 +83,7 @@ type requester = ?body:Body.t -> Cohttp.Request.t -> (Cohttp.Response.t * Body.t
 module type Connection = sig
   module Net : Net
 
+  exception Retry
   type t
 
   (** [create ?finalise ?persistent ?ctx endp] connects to [endp]. The
