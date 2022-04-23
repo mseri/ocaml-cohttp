@@ -225,7 +225,10 @@ struct
       end >>= fun (encoding, body) ->
 
       let headers =
-        if connection.persistent = `False
+        if match connection.state with
+          | _ when connection.persistent = `False -> true
+          | Closing _ when Queue.is_empty connection.waiting -> true
+          | _ -> false
         then Header.add_unless_exists headers "Connection" "close"
         else headers
       in
@@ -246,7 +249,15 @@ struct
           Lwt.return_unit
         end
       >>= fun () ->
-      writer connection
+      if connection.persistent = `False
+      then begin
+        (* uncomment when https://github.com/mirage/ocaml-conduit/pull/319 is released *)
+        (* (try Net.close_out oc with _ -> ()); *)
+        connection.state <- Half ic;
+        queue_fail connection connection.waiting Retry;
+        Lwt.return_unit
+      end
+      else writer connection
     | Failed e ->
       queue_fail connection connection.waiting e;
       Lwt.return_unit
