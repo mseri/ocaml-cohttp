@@ -161,6 +161,7 @@ struct
         end;
         connection.finalise connection >>= fun () ->
         queue_fail connection connection.in_flight Retry;
+        queue_fail connection connection.waiting Retry;
         Lwt.return_unit
       | `Invalid reason ->
         let e = Failure ("Cohttp_lwt failed to read response: " ^ reason) in
@@ -200,9 +201,12 @@ struct
 
       (* select encoding based on header, request, body and make sure
        * the encoding in the request matches the encoding in the header. *)
-      begin match Header.get_transfer_encoding (Request.headers req) with
+      begin match Header.get_transfer_encoding headers with
         | Unknown ->
           begin match Request.encoding req with
+          | Fixed 0L
+          (* this is the default selected by Request.make.
+           * XXX: Shouldn't the default be Unknown ? *)
           | Unknown ->
             begin match Body.transfer_encoding body with
             | Fixed _ as e -> Lwt.return (e, body)
