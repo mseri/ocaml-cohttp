@@ -64,7 +64,7 @@ module Client : sig
         override a hostname to point it to a Unix domain socket). *)
 end
 = struct
-  include Cohttp_lwt.Make_client (Io) (Net)
+  include Cohttp_lwt.Client.Make (Connection)
 
   let custom_ctx = Net.init
 end
