@@ -47,8 +47,7 @@ end
 (** This is compatible with [Mirage_time.S].
     It may be satisfied by mirage-time-unix [Time] or [Mirage_time]. *)
 module type Sleep = sig
-  type 'a promise
-  val sleep_ns : int64 -> unit promise
+  val sleep_ns : int64 -> unit Lwt.t
 end
 
 (** [request ?body request]
