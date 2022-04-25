@@ -53,7 +53,7 @@ let test_server tests =
     >|= Cohttp_lwt_unix_test.response
   in
   Cohttp_lwt_unix_test.test_server_s
-    ~name:"mutable ressources"
+    ~name:"mutable resources"
     spec tests
 
 (* Client side of the RPC interface *)
