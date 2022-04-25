@@ -13,22 +13,23 @@ struct
 
   let set_cache c = cache := c
 
-  let request ?ctx =
-    match ctx with
-    | None -> !cache
-    | Some ctx -> No_cache.(request (create ~ctx ()))
-
-  let call ?ctx ?headers ?(body = `Empty) ?chunked meth uri
+  let call ?ctx ?headers ?body ?chunked meth uri
     =
-    begin match chunked with
-      | None -> Lwt.return (Cohttp.Transfer.Unknown, body)
-      | Some true -> Lwt.return (Cohttp.Transfer.Chunked, body)
-      | Some false ->
-        Body.length body >|= fun (length, body) ->
-        Cohttp.Transfer.Fixed length, body
-    end >>= fun (encoding, body) ->
-    let req = Request.make ?headers ~meth ~encoding uri in
-    request ?ctx ~body req
+    let add_transfer =
+      Header.add_transfer_encoding
+        (Option.value ~default:(Header.init ()) headers)
+    in
+    match chunked with
+    | None ->
+      request ?ctx ?headers ?body meth uri
+    | Some true ->
+      let headers = add_transfer Cohttp.Transfer.Chunked in
+      request ?ctx ~headers ?body meth uri
+    | Some false ->
+      Option.value ~default:`Empty body
+      |> Body.length >>= fun (length, body) ->
+      let headers = add_transfer (Cohttp.Transfer.Fixed length) in
+      request ?ctx ~headers ~body meth uri
 
   (* The HEAD should not have a response body *)
   let head ?ctx ?headers uri = call ?ctx ?headers `HEAD uri >|= fst
@@ -66,5 +67,9 @@ struct
       Lwt.return_none
     | Some (req, body) ->
       Lwt_mutex.with_lock mutex @@ fun () ->
-      Connection.request connection ~body req >|= Option.some
+      let headers, meth, uri, enc =
+        Request.(headers req, meth req, uri req, encoding req)
+      in
+      let headers = Header.add_transfer_encoding headers enc in
+      Connection.request connection ~headers ~body meth uri >|= Option.some
 end
