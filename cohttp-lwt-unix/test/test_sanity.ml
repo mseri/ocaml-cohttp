@@ -84,7 +84,6 @@ let check_logs test () =
 
 let ts =
   Cohttp_lwt_unix_test.test_server_s server (fun uri ->
-      let uri = Uri.with_host uri (Some "localhost") in
       let ctx = Cohttp_lwt_unix.Net.default_ctx in
       let t () =
         Client.get ~ctx uri >>= fun (_, body) ->
