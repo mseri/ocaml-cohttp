@@ -97,8 +97,8 @@ struct
 
   let rec reader connection =
     match connection.state with
-    | Connecting _ -> assert false
-    | Closed | Failed _ -> assert false
+    | Connecting _ | Failed _ -> assert false
+    | Closed -> Lwt.return_unit
     | Full (ic, _) | Closing (ic, _) | Half ic ->
       Response.read ic >>= fun res ->
       match res with
