@@ -9,9 +9,14 @@ struct
 
   type ctx = Net.ctx
 
-  let cache = ref No_cache.(request (create ()))
+  let cache = ref No_cache.(call (create ()))
 
   let set_cache c = cache := c
+
+  let cache ?ctx =
+    match ctx with
+    | None -> !cache
+    | Some ctx -> No_cache.(call (create ~ctx ()))
 
   let call ?ctx ?headers ?body ?chunked meth uri
     =
@@ -21,15 +26,15 @@ struct
     in
     match chunked with
     | None ->
-      request ?ctx ?headers ?body meth uri
+      cache ?ctx ?headers ?body meth uri
     | Some true ->
       let headers = add_transfer Cohttp.Transfer.Chunked in
-      request ?ctx ~headers ?body meth uri
+      cache ?ctx ~headers ?body meth uri
     | Some false ->
       Option.value ~default:`Empty body
       |> Body.length >>= fun (length, body) ->
       let headers = add_transfer (Cohttp.Transfer.Fixed length) in
-      request ?ctx ~headers ~body meth uri
+      cache ?ctx ~headers ~body meth uri
 
   (* The HEAD should not have a response body *)
   let head ?ctx ?headers uri = call ?ctx ?headers `HEAD uri >|= fst
@@ -71,5 +76,5 @@ struct
         Request.(headers req, meth req, uri req, encoding req)
       in
       let headers = Header.add_transfer_encoding headers enc in
-      Connection.request connection ~headers ~body meth uri >|= Option.some
+      Connection.call connection ~headers ~body meth uri >|= Option.some
 end

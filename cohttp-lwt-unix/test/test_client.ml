@@ -53,7 +53,7 @@ let test_server tests =
     >|= Cohttp_lwt_unix_test.response
   in
   Cohttp_lwt_unix_test.test_server_s
-    ~name:"Mutable ressources"
+    ~name:"mutable ressources"
     spec tests
 
 (* Client side of the RPC interface *)
@@ -121,10 +121,10 @@ let test_client uri =
   assert_equal ~printer:Fun.id "Spring" body;
 
   (* simple request function accepting custom requests. *)
-  let handler ?headers ?body meth uri = Client.request ?headers ?body meth uri in
+  let handler ?headers ?body meth uri = Client.call ?headers ?body meth uri in
   tests handler uri
 
-(* The Client.{request, get, put, ...} functions by default use a new
+(* The Client.{call, get, put, ...} functions by default use a new
  * connection for each request. In a high-latency environment or when
  * connection setup is expensive due to TLS one might want to use a persistent
  * connection. This can be done by using the lower-level Connection or
@@ -137,7 +137,7 @@ let test_persistent uri =
   let uri = Uri.with_host uri (Some "localhost") in
   Connection.Net.resolve ~ctx:Connection.Net.default_ctx uri (* resolve hostname. *)
   >>= Connection.connect ~persistent:true >>= fun connection -> (* open connection *)
-  let handler = Connection.request connection in
+  let handler = Connection.call connection in
   tests handler uri >|= fun () ->
   Connection.close connection
 
@@ -150,7 +150,7 @@ let test_non_persistent uri =
   Connection.Net.resolve ~ctx:Connection.Net.default_ctx uri >>= fun endp ->
   let handler ?headers ?body meth uri =
     Connection.connect ~persistent:false endp >>= fun connection ->
-    Connection.request connection ?headers ?body meth uri
+    Connection.call connection ?headers ?body meth uri
   in
   tests handler uri
 
@@ -165,7 +165,7 @@ let test_unknown uri =
   let connection = ref c in (* reference to open connection *)
   let rec handler ?headers ?body meth uri =
     Lwt.catch
-      (fun () -> Connection.request !connection ?headers ?body meth uri)
+      (fun () -> Connection.call !connection ?headers ?body meth uri)
       (function
         | Connection.Retry ->
           (* We may safely retry. The request has not yet been processed by the
@@ -192,15 +192,15 @@ module Cache = Cohttp_lwt_unix.Connection_cache
 let test_cache uri =
   let uri = Uri.with_host uri (Some "localhost") in
   let cache = Cache.create () in
-  let handler = Cache.request cache in (* <- this is a partial application *)
+  let handler = Cache.call cache in (* <- this is a partial application *)
   tests handler uri
 
-(* In case you want to stick with the convenience Client.{request, get, put, ...}
+(* In case you want to stick with the convenience Client.{call, get, put, ...}
  * functions, you may set another default connection cache: *)
 
 let test_client_cached uri =
   let cache = Cache.create () in
-  Client.set_cache (Cache.request cache);
+  Client.set_cache (Cache.call cache);
   test_client uri
 
 let tests uri =

@@ -172,7 +172,7 @@ struct
         queue_fail connection connection.in_flight e;
         Lwt.return_unit
 
-  let request connection ?headers ?(body = `Empty) meth uri =
+  let call connection ?headers ?(body = `Empty) meth uri =
     let headers = match headers with Some h -> h | None -> Header.init () in
     match connection.state with
     | Connecting _ | Full _ ->
