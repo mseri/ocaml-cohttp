@@ -41,7 +41,9 @@ jobs:
       - run: yarn --frozen-lockfile
         working-directory: cohttp-lwt-jsoo/test
 
-      - run: opam install . --deps-only --with-test
+      - run: |
+          opam depext --depext-only conf-libcurl
+          opam install . --deps-only --with-test
 
       - run: opam exec -- make build
 
