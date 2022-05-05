@@ -42,7 +42,7 @@ jobs:
         working-directory: cohttp-lwt-jsoo/test
 
       - run: |
-          opam depext --depext-only conf-libcurl
+          opam depext conf-libcurl
           opam install . --deps-only --with-test
 
       - run: opam exec -- make build
