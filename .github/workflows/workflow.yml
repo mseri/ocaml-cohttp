@@ -42,6 +42,8 @@ jobs:
         working-directory: cohttp-lwt-jsoo/test
 
       - run: |
+          sudo apt update
+          sudo apt upgrade
           opam depext conf-libcurl
           opam install . --deps-only --with-test
 
